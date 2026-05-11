@@ -5807,79 +5807,89 @@
         }
     </style>
     <!-- Firebase SDK -->
-    <script>
-window.token = localStorage.getItem("bs_token") || localStorage.getItem("token");
-window.apiFetch = async function apiFetch(url, method="GET", body=null) {
-    const opts = { method, headers: { Authorization: "Bearer " + window.token, "Content-Type": "application/json" } };
-    if (body) opts.body = JSON.stringify(body);
-    const r = await fetch(url, opts);
-    if (r.status === 401) { localStorage.clear(); window.location.replace("login.html"); }
-    return r.json();
-}
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, setDoc, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
-// FIREBASE COMPATIBILITY LAYER
-window.menuItems = [];
-window.transactionHistory = [];
-window._db = "simulated_db";
-window._menuCol = "menuItems";
+        const firebaseConfig = {
+            apiKey: "AIzaSyAjQCHeifoKSYr7UDrDiIEaP8Hyn31fJPw",
+            authDomain: "billsmart-id.firebaseapp.com",
+            projectId: "billsmart-id",
+            storageBucket: "billsmart-id.firebasestorage.app",
+            messagingSenderId: "324861430784",
+            appId: "1:324861430784:web:a8ad9297c5f607c8389ce5",
+            measurementId: "G-9EFB99YG6Z"
+        };
 
-window._fsDoc = function(db, col, id) {
-    return { col, id };
-};
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const menuCol = collection(db, 'menuItems');
+        const txCol = collection(db, 'transactions');
 
-window._fsAddDoc = async function(colRef, data) {
-    // Determine target based on data or ref
-    if (data.items) {
-        return window.apiFetch('/api/transactions', 'POST', data);
-    } else {
-        return window.apiFetch('/api/menu', 'POST', data);
-    }
-};
+        // Expose ke global agar fungsi lain bisa pakai
+        window._db = db;
+        window._menuCol = menuCol;
+        window._fsTxCol = txCol;
+        window._fsDoc = doc;
+        window._fsDeleteDoc = deleteDoc;
+        window._fsAddDoc = addDoc;
+        window._fsSetDoc = setDoc;
+        window._fsCollection = collection;
 
-window._fsSetDoc = async function(docRef, data, options) {
-    if (docRef.col === 'menuItems' && data.stock !== undefined) {
-        return window.apiFetch('/api/menu/' + docRef.id + '/stock', 'PATCH', { stock: data.stock });
-    }
-    // General update
-    if (docRef.col === 'menuItems') {
-        return window.apiFetch('/api/menu/' + docRef.id, 'PUT', data);
-    }
-};
+        // Real-time listener — menuItems
+        onSnapshot(menuCol, function (snapshot) {
+            window.menuItems = [];
+            snapshot.forEach(function (d) {
+                var data = d.data();
+                data._docId = d.id;
+                window.menuItems.push(data);
+            });
+            if (typeof renderMenu === 'function') renderMenu();
+            if (typeof renderCategories === 'function') renderCategories();
+            if (typeof apRenderMenuTable === 'function') apRenderMenuTable();
+        });
 
-window._fsDeleteDoc = async function(docRef) {
-    if (docRef.col === 'menuItems') {
-        return window.apiFetch('/api/menu/' + docRef.id, 'DELETE');
-    }
-    // Transaction delete can go here if the backend supports it.
-};
-
-// Initial data fetch and UI render
-window.addEventListener('DOMContentLoaded', async () => {
-    try {
-        const menus = await window.apiFetch('/api/menu');
-        if (Array.isArray(menus)) {
-            window.menuItems = menus.map(m => ({ ...m, _docId: m.id || m._docId }));
-        }
-    } catch(err) { console.error('Error fetching menu:', err); }
-    
-    try {
-        const txs = await window.apiFetch('/api/transactions');
-        if (Array.isArray(txs)) {
-            window.transactionHistory = txs.map(t => ({ ...t, _docId: t.id || t._docId }));
-        }
-    } catch(err) { console.error('Error fetching transactions:', err); }
-
-    // Re-render UI
-    if (typeof renderMenu === 'function') renderMenu();
-    if (typeof apRenderTransaksi === 'function') apRenderTransaksi();
-    if (typeof apRenderDashboard === 'function') apRenderDashboard();
-    if (typeof apRenderStockManager === 'function') apRenderStockManager();
-});
-
-</script>
+        // Real-time listener — transactions (urut terbaru dulu)
+        onSnapshot(query(txCol, orderBy('timestamp', 'desc')), function (snapshot) {
+            window.transactionHistory = [];
+            snapshot.forEach(function (d) {
+                var data = d.data();
+                data._docId = d.id;
+                window.transactionHistory.push(data);
+            });
+            // Refresh semua view yang menampilkan transaksi
+            if (typeof renderHistory === 'function') renderHistory();
+            if (typeof apRenderDashboard === 'function') apRenderDashboard();
+            if (typeof apRenderTransaksi === 'function') apRenderTransaksi();
+            if (typeof apRenderAnalitik === 'function') apRenderAnalitik();
+        });
+    </script>
 </head>
 
 <body>
+    <!-- ═══════════ JWT AUTH GUARD ═══════════ -->
+    <script>
+        (function() {
+            var token = localStorage.getItem('bs_token');
+            if (!token) {
+                window.location.replace('login.html');
+                return;
+            }
+            // Parse user info untuk ditampilkan
+            try {
+                var u = JSON.parse(localStorage.getItem('bs_user') || '{}');
+                window._bsUser = u;
+            } catch(e) { window._bsUser = {}; }
+        })();
+
+        function bsLogout() {
+            localStorage.removeItem('bs_token');
+            localStorage.removeItem('bs_user');
+            window.location.replace('login.html');
+        }
+    </script>
+    <!-- ════════════════════════════════════════ -->
+
     <!-- Coffee SaaS background grid overlay -->
     <div class="grid-overlay"></div>
 
@@ -5990,10 +6000,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 
                 <div class="ap-footer">
                     <div class="ap-user-row">
-                        <div class="ap-avatar">A</div>
+                        <div class="ap-avatar" id="apAvatarLetter">A</div>
                         <div>
-                            <div class="ap-uname">Administrator</div>
-                            <div class="ap-urole">Super Admin</div>
+                            <div class="ap-uname" id="apUserName">Administrator</div>
+                            <div class="ap-urole" id="apUserRole">Super Admin</div>
                         </div>
                     </div>
                     <button class="ap-lock-btn" onclick="apLockPanel()">
@@ -8509,7 +8519,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
 
         function apLockPanel() {
-            if (confirm('Kunci admin panel?')) lockAdmin();
+            if (confirm('Keluar dari Billsmart.id?')) {
+                bsLogout();
+            }
         }
 
         function apSetView(name, btn) {
@@ -8865,6 +8877,18 @@ window.addEventListener('DOMContentLoaded', async () => {
         renderMenu();
         loadSavedTheme();
         setTimeout(function () { startTutorial(); }, 600);
+
+        // Populate user info from JWT session
+        (function() {
+            var u = window._bsUser || {};
+            var name = u.name || u.email || u.username || 'Administrator';
+            var role = u.role || 'Kasir';
+            var letter = name.charAt(0).toUpperCase();
+            var el;
+            el = document.getElementById('apAvatarLetter'); if(el) el.textContent = letter;
+            el = document.getElementById('apUserName'); if(el) el.textContent = name;
+            el = document.getElementById('apUserRole'); if(el) el.textContent = role;
+        })();
     </script>
 
     <div class="auth-overlay hidden" id="authOverlay">
