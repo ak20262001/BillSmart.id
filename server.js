@@ -88,8 +88,16 @@ function getAppUrl(req) {
 // ── Middleware ───────────────────────────────────────────────────
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
-app.use(express.static(__dirname));
+
+// ── Static HTML routes (explicit, for Vercel serverless compatibility) ──
+// express.static(__dirname) unreliable on Vercel — serve each file explicitly
 app.get('/', (req, res) => res.redirect('/login.html'));
+app.get('/login.html', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
+app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/reset-password.html', (req, res) => res.sendFile(path.join(__dirname, 'reset-password.html')));
+
+// Keep static for assets (img, css, etc)
+app.use(express.static(__dirname));
 
 // ── Email Transporter ────────────────────────────────────────────
 const transporter = nodemailer.createTransport(CONFIG.EMAIL);
