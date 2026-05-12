@@ -5808,12 +5808,21 @@
     </style>
     <!-- Firebase SDK -->
     <script>
+// ── AUTH GUARD ──────────────────────────────────────────────────
 window.token = localStorage.getItem("bs_token") || localStorage.getItem("token");
+if (!window.token) {
+    window.location.replace("login.html");
+}
+
 window.apiFetch = async function apiFetch(url, method="GET", body=null) {
     const opts = { method, headers: { Authorization: "Bearer " + window.token, "Content-Type": "application/json" } };
     if (body) opts.body = JSON.stringify(body);
     const r = await fetch(url, opts);
-    if (r.status === 401) { localStorage.clear(); window.location.replace("login.html"); }
+    if (r.status === 401) {
+        localStorage.clear();
+        window.location.replace("login.html");
+        throw new Error("Unauthorized");
+    }
     return r.json();
 }
 
@@ -5856,17 +5865,17 @@ window._fsDeleteDoc = async function(docRef) {
 // Initial data fetch and UI render
 window.addEventListener('DOMContentLoaded', async () => {
     try {
-        const menus = await window.apiFetch('/api/menu');
-        if (Array.isArray(menus)) {
-            window.menuItems = menus.map(m => ({ ...m, _docId: m.id || m._docId }));
-        }
+        const menuRes = await window.apiFetch('/api/menu');
+        // server returns { items: [...] }
+        const menusArr = Array.isArray(menuRes) ? menuRes : (menuRes.items || []);
+        window.menuItems = menusArr.map(m => ({ ...m, _docId: m.id || m._docId }));
     } catch(err) { console.error('Error fetching menu:', err); }
     
     try {
-        const txs = await window.apiFetch('/api/transactions');
-        if (Array.isArray(txs)) {
-            window.transactionHistory = txs.map(t => ({ ...t, _docId: t.id || t._docId }));
-        }
+        const txRes = await window.apiFetch('/api/transactions');
+        // server returns { transactions: [...], total: N }
+        const txsArr = Array.isArray(txRes) ? txRes : (txRes.transactions || []);
+        window.transactionHistory = txsArr.map(t => ({ ...t, _docId: t.id || t._docId }));
     } catch(err) { console.error('Error fetching transactions:', err); }
 
     // Re-render UI
