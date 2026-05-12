@@ -977,10 +977,27 @@ let resetToken = new URLSearchParams(window.location.search).get('token');
 let pendingEmail = sessionStorage.getItem('bs_pending_email') || '';
 let resendTimer = null;
 
-/* ── REDIRECT IF LOGGED IN ── */
-if (localStorage.getItem('bs_token') && !resetToken) {
-    window.location.replace('index.html');
-}
+/* ── REDIRECT IF LOGGED IN (validate token to server first) ── */
+(async () => {
+    const savedToken = localStorage.getItem('bs_token');
+    if (savedToken && !resetToken) {
+        try {
+            const r = await fetch('/api/auth/me', {
+                headers: { Authorization: 'Bearer ' + savedToken }
+            });
+            if (r.ok) {
+                // Token masih valid → langsung ke dashboard
+                window.location.replace('index.html');
+            } else {
+                // Token expired/invalid → hapus dan tampilkan login
+                localStorage.removeItem('bs_token');
+                localStorage.removeItem('bs_user');
+            }
+        } catch {
+            // Tidak bisa reach server → tetap tampilkan login
+        }
+    }
+})();
 
 /* ── HANDLE QUERY PARAMS ── */
 const qp = new URLSearchParams(window.location.search);
