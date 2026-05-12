@@ -267,23 +267,8 @@ CREATE INDEX IF NOT EXISTS idx_tx_created ON transactions(created_at);
 */
 
 // ── SEED MENU ─────────────────────────────────────────────────────
-async function seedMenuIfEmpty() {
-    const { count } = await supabase.from('menu_items').select('*', { count: 'exact', head: true });
-    if (count === 0) {
-        await supabase.from('menu_items').insert([
-            { category:'Makanan',  name:'Wagyu Steak',        description:'Premium wagyu beef 200gr', price:750000, stock:15, badge:'Terlaris' },
-            { category:'Makanan',  name:'Lobster Bakar',       description:'Lobster segar 500gr',      price:650000, stock:5,  badge:'Promo'    },
-            { category:'Makanan',  name:'Nasi Goreng Spesial', description:'Dengan telur & ayam',      price:45000,  stock:50, badge:null       },
-            { category:'Makanan',  name:'Mie Goreng',          description:'Level pedas 1-5',          price:35000,  stock:50, badge:null       },
-            { category:'Minuman',  name:'Es Teh Manis',        description:'Teh segar manis dingin',   price:15000,  stock:100,badge:null       },
-            { category:'Minuman',  name:'Kopi Susu',           description:'Creamy latte arabika',     price:35000,  stock:80, badge:null       },
-            { category:'Minuman',  name:'Jus Alpukat',         description:'Alpukat segar + susu',     price:28000,  stock:30, badge:null       },
-            { category:'Dessert',  name:'Es Krim Vanilla',     description:'Double scoop',             price:25000,  stock:20, badge:null       },
-        ]);
-        console.log('✅ Menu seed berhasil ditambahkan');
-    }
-}
-seedMenuIfEmpty().catch(console.error);
+// ── Seed dihapus: setiap user punya data sendiri (multi-tenant)
+// User bisa tambah menu sendiri via dashboard setelah login.
 
 // ══════════════════════════════════════════════════════════════════
 //  AUTH ROUTES
@@ -552,7 +537,10 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 
 app.get('/api/menu', authMiddleware, async (req, res) => {
     const { data: items } = await supabase
-        .from('menu_items').select('*').eq('is_active', true).order('category').order('name');
+        .from('menu_items').select('*')
+        .eq('owner_id', req.user.id)
+        .eq('is_active', true)
+        .order('category').order('name');
     res.json({ items: items || [] });
 });
 
@@ -565,7 +553,7 @@ app.post('/api/menu', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'Harga tidak valid.' });
 
     const { data, error } = await supabase.from('menu_items')
-        .insert({ category, name, description: description || '', price: parseInt(price), stock: parseInt(stock) || 0, image_url: image_url || null, badge: badge || null })
+        .insert({ owner_id: req.user.id, category, name, description: description || '', price: parseInt(price), stock: parseInt(stock) || 0, image_url: image_url || null, badge: badge || null })
         .select('id, name, price, stock').single();
 
     if (error) {
@@ -582,7 +570,8 @@ app.put('/api/menu/:id', authMiddleware, async (req, res) => {
             category, name, description, price, stock, image_url, badge,
             is_active: is_active !== undefined ? is_active : true
         })
-        .eq('id', req.params.id);
+        .eq('id', req.params.id)
+        .eq('owner_id', req.user.id);   // ← hanya bisa edit menu miliknya
 
     if (error) return res.status(500).json({ error: 'Gagal update menu.' });
     res.json({ success: true });
@@ -594,16 +583,16 @@ app.patch('/api/menu/:id/stock', authMiddleware, async (req, res) => {
 
     if (add !== undefined) {
         // Tambahkan ke stok existing
-        const { data: item } = await supabase.from('menu_items').select('stock').eq('id', req.params.id).single();
+        const { data: item } = await supabase.from('menu_items').select('stock').eq('id', req.params.id).eq('owner_id', req.user.id).single();
         if (!item) return res.status(404).json({ error: 'Menu tidak ditemukan.' });
         const newStock = Math.max(0, (item.stock || 0) + parseInt(add));
-        await supabase.from('menu_items').update({ stock: newStock }).eq('id', req.params.id);
+        await supabase.from('menu_items').update({ stock: newStock }).eq('id', req.params.id).eq('owner_id', req.user.id);
         return res.json({ success: true, stock: newStock });
     }
 
     if (stock !== undefined) {
         if (isNaN(stock) || stock < 0) return res.status(400).json({ error: 'Stok tidak valid.' });
-        await supabase.from('menu_items').update({ stock: parseInt(stock) }).eq('id', req.params.id);
+        await supabase.from('menu_items').update({ stock: parseInt(stock) }).eq('id', req.params.id).eq('owner_id', req.user.id);
         return res.json({ success: true, stock: parseInt(stock) });
     }
 
@@ -611,7 +600,7 @@ app.patch('/api/menu/:id/stock', authMiddleware, async (req, res) => {
 });
 
 app.delete('/api/menu/:id', authMiddleware, async (req, res) => {
-    await supabase.from('menu_items').update({ is_active: false }).eq('id', req.params.id);
+    await supabase.from('menu_items').update({ is_active: false }).eq('id', req.params.id).eq('owner_id', req.user.id);
     res.json({ success: true });
 });
 
@@ -621,7 +610,8 @@ app.delete('/api/menu/:id', authMiddleware, async (req, res) => {
 
 app.get('/api/transactions', authMiddleware, async (req, res) => {
     const { limit = 50, offset = 0, date } = req.query;
-    let query = supabase.from('transactions').select('*', { count: 'exact' });
+    let query = supabase.from('transactions').select('*', { count: 'exact' })
+        .eq('owner_id', req.user.id);   // ← hanya transaksi miliknya
     if (date) query = query.gte('created_at', date + 'T00:00:00').lte('created_at', date + 'T23:59:59');
     query = query.order('created_at', { ascending: false })
                  .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
@@ -637,15 +627,18 @@ app.post('/api/transactions', authMiddleware, async (req, res) => {
     const invNo    = 'INV-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
     const { data: user } = await supabase.from('users').select('name').eq('id', req.user.id).maybeSingle();
 
-    // Update stok
+    // Update stok — hanya menu milik owner yang bersangkutan
     for (const item of itemsArr) {
-        const { data: menuItem } = await supabase.from('menu_items').select('stock').eq('id', item.id).single();
+        const { data: menuItem } = await supabase.from('menu_items').select('stock')
+            .eq('id', item.id).eq('owner_id', req.user.id).single();
         if (!menuItem || menuItem.stock < item.qty)
             return res.status(400).json({ error: `Stok ${item.name} tidak cukup.` });
-        await supabase.from('menu_items').update({ stock: menuItem.stock - item.qty }).eq('id', item.id);
+        await supabase.from('menu_items').update({ stock: menuItem.stock - item.qty })
+            .eq('id', item.id).eq('owner_id', req.user.id);
     }
 
     const { error } = await supabase.from('transactions').insert({
+        owner_id: req.user.id,   // ← tandai kepemilikan transaksi
         invoice_no: invNo, cashier_id: req.user.id, cashier_name: user?.name || req.user.email,
         items_json: itemsArr, subtotal: subtotal || 0, tax: tax || 0, discount: discount || 0,
         total, payment_method: payment_method || 'tunai', payment_amount: payment_amount || 0,
@@ -662,17 +655,19 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
     const monthStart = today.slice(0, 7) + '-01';
 
     const { data: todayTx } = await supabase.from('transactions')
-        .select('total').eq('status', 'selesai')
+        .select('total').eq('owner_id', req.user.id).eq('status', 'selesai')
         .gte('created_at', today + 'T00:00:00').lte('created_at', today + 'T23:59:59');
 
     const { data: monthTx } = await supabase.from('transactions')
-        .select('total').eq('status', 'selesai').gte('created_at', monthStart + 'T00:00:00');
+        .select('total').eq('owner_id', req.user.id).eq('status', 'selesai')
+        .gte('created_at', monthStart + 'T00:00:00');
 
     const { data: lowStock } = await supabase.from('menu_items')
-        .select('name, stock').eq('is_active', true).lte('stock', 10).order('stock');
+        .select('name, stock').eq('owner_id', req.user.id).eq('is_active', true)
+        .lte('stock', 10).order('stock');
 
     const { data: allItems } = await supabase.from('menu_items')
-        .select('id, name, price').eq('is_active', true).limit(20);
+        .select('id, name, price').eq('owner_id', req.user.id).eq('is_active', true).limit(20);
 
     const todayTotal = (todayTx || []).reduce((s, t) => s + t.total, 0);
     const monthTotal = (monthTx || []).reduce((s, t) => s + t.total, 0);
@@ -691,7 +686,9 @@ app.get('/api/report/export', authMiddleware, async (req, res) => {
     const today = date || new Date().toISOString().split('T')[0];
     const monthStart = today.slice(0, 7) + '-01';
 
-    let txQuery = supabase.from('transactions').select('*').order('created_at', { ascending: false });
+    let txQuery = supabase.from('transactions').select('*')
+        .eq('owner_id', req.user.id)    // ← hanya laporan miliknya
+        .order('created_at', { ascending: false });
 
     if (type === 'daily') {
         txQuery = txQuery.gte('created_at', today + 'T00:00:00').lte('created_at', today + 'T23:59:59');
